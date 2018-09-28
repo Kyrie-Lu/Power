@@ -1,1 +1,324 @@
+import pandas_datareader.data as web  
+import datetime
+import pandas as pd
+import matplotlib.pyplot as plt
+import numpy as np
+from matplotlib.dates import DateFormatter, WeekdayLocator,DayLocator, MONDAY
+from mpl_finance import candlestick_ohlc 
+import matplotlib
 
+#1.获得K线与移动线函数
+def pandas_candlestick_ohlc(date, stick = "day", otherseries = None):
+    mondays = WeekdayLocator(MONDAY)        # major ticks on the mondays #设置主刻度
+    alldays = DayLocator()              # minor ticks on the days  #设置次要刻度
+    transdat = date.loc[:,['Open','High','Low','Close']]
+    plotdat = transdat
+    stick = 1
+    fig,ax = plt.subplots()
+    weekFormatter = DateFormatter('%b %d')  # e.g., Jan 12
+    ax.xaxis.set_major_locator(mondays)  #设置主刻度
+    ax.xaxis.set_minor_locator(alldays)   #设置次要刻度
+    ax.xaxis.set_major_formatter(weekFormatter) 
+    candlestick_ohlc(ax, list(zip(list(matplotlib.dates.date2num(plotdat.index.tolist())), plotdat["Open"].tolist(), 
+                plotdat["High"].tolist(),plotdat["Low"].tolist(), plotdat["Close"].tolist())),colorup = "black", colordown = "red", width = stick * .4)
+    if otherseries != None:
+        if type(otherseries) != list:
+            otherseries = [otherseries]
+        date.loc[:,otherseries].plot(ax=ax, lw = 1.3, grid = True)
+    
+    
+    ax.xaxis_date() 
+    ax.autoscale_view()   # 调节坐标范围使矩形能够完全显示
+    plt.setp(plt.gca().get_xticklabels(), rotation=45) 
+    plt.show()
+    
+#2.添加数据
+start = datetime.datetime(2018,5,1)
+end = datetime.datetime(2018,9,25)
+'''
+tsla = web.DataReader('TSLA','yahoo',start,end)
+apple = web.DataReader('AAPL','yahoo',start,end)
+apple["20d"] = np.round(apple["Close"].rolling(window = 20, center = False).mean(), 2)  #末尾添加一列 20d 数据
+apple["50d"] = np.round(apple["Close"].rolling(window = 50, center = False).mean(), 2)
+apple['20d-50d'] =apple['20d'] -apple['50d']
+# np.where() is a vectorized if-else function, where a condition is checked for each component of a vector, and the first argument passed is used when the condition holds, and the other passed if it does not
+apple["Regime"] = np.where(apple['20d-50d'] > 0, 1, 0)
+# We have 1's for bullish regimes and 0's for everything else. Below I replace bearish regimes's values with -1, and to maintain the rest of the vector, the second argument is apple["Regime"]
+apple["Regime"] = np.where(apple['20d-50d'] < 0, -1, apple["Regime"])
+#apple.loc['2017-01-01':'2018-09-19',"Regime"].plot(ylim = (-2,2)).axhline(y = 0, color = "black", lw = 2)
+#pandas_candlestick_ohlc(apple.loc['2017-01-01':'2018-09-19',:], otherseries = ["20d", "50d"])
+#3.添加信号
+# To ensure that all trades close out, I temporarily change the regime of the last row to 0
+regime_orig = apple.iloc[-1,-1]    #iloc索引只能进行整数索引，即进行位置索引，不能进行label索引，而loc基于label索引
+#regime_orig = apple.ix[-100,'Regime']
+#print(regime_orig)
+#print(apple["Regime"])
+apple.iloc[-1, -1] = 0
+apple["Signal"] = np.sign(apple["Regime"] - apple["Regime"].shift(1))
+#print(apple["Signal"])
+#apple["Signal"].plot(ylim = (-2,2)).axhline(y = 0, color = "black", lw = 2)
+# Restore original regime data
+apple.iloc[-1,-1] = regime_orig
+#apple.tail()
+#print(apple.loc[apple["Signal"] ==1,"Close"])   #输出每次买入股票时的股价
+# Create a DataFrame with trades, including the price at the trade and the regime under which the trade is made.
+apple_signals = pd.concat([
+        pd.DataFrame({"Price": apple.loc[apple["Signal"] == 1, "Close"],
+                     "Regime": apple.loc[apple["Signal"] == 1, "Regime"],
+                     "Signal": "Buy"}),
+        pd.DataFrame({"Price": apple.loc[apple["Signal"] == -1, "Close"],
+                     "Regime": apple.loc[apple["Signal"] == -1, "Regime"],
+                     "Signal": "Sell"}),
+    ])   #对数据进行合并
+apple_signals.sort_index(inplace = True)   #inplace = True 表示直接对apple_signals变量进行修改
+#print(aa)
+#print(apple_signals)
+#4.查看利润情况Let's see the profitability of long trades
+apple_long_profits = pd.DataFrame({
+        "Price": apple_signals.loc[(apple_signals["Signal"] == "Buy") &
+                                  apple_signals["Regime"] == 1, "Price"],
+        "Profit": pd.Series(apple_signals["Price"] - apple_signals["Price"].shift(1)).loc[apple_signals.loc[(apple_signals["Signal"].shift(1) == "Buy") & (apple_signals["Regime"].shift(1) == 1)].index].tolist(),
+        "End Date": apple_signals.loc[(apple_signals["Signal"].shift(1) == "Buy") & (apple_signals["Regime"].shift(1) == 1)].index
+    })
+#print(apple_long_profits)
+#print(apple_signals.loc[(apple_signals["Signal"] == "Buy") & apple_signals["Regime"] == 1, "Price"])
+#print(pd.Series(apple_signals["Price"] - apple_signals["Price"].shift(1)).loc[apple_signals.loc[(apple_signals["Signal"].shift(1) == "Buy") & (apple_signals["Regime"].shift(1) == 1)].index].tolist())
+#print(apple_signals.loc[(apple_signals["Signal"].shift(1) == "Buy") & (apple_signals["Regime"].shift(1) == 1)].index)
+#4.账户进行回测
+# 获得每个交易时期的最低价
+tradeperiods =pd.DataFrame({"Start": apple_long_profits.index,
+                            "End": apple_long_profits["End Date"]})
+apple_long_profits["Low"] =tradeperiods.apply(lambda x: min(apple.loc[x["Start"]:x["End"], "Low"]), axis =1)
+#print(apple_long_profits)
+# Now we have all the information needed to simulate this strategy in apple_adj_long_profits
+cash =1000000
+apple_backtest =pd.DataFrame({"Start Port. Value": [],
+                         "End Port. Value": [],
+                         "End Date": [],
+                         "Shares": [],
+                         "Share Price": [],
+                         "Trade Value": [],
+                         "Profit per Share": [],
+                         "Total Profit": [],
+                         "Stop-Loss Triggered": []})
+#print(apple_backtest)
+port_value =.1# Max proportion of portfolio bet on any trade
+batch =100# Number of shares bought per batch
+stoploss =.2# % of trade loss that would trigger a stoploss
+for index, row in apple_long_profits.iterrows():   #iterrows用来遍历dataframe，row表示每个列的值
+    #print(index,'\n')
+    #print(type(index))
+    #print(row,'\n')
+    #np.floor:返回不大于x的最大整数，np.ceil返回值大于x一点的整数
+    batches =np.floor(cash *port_value) // np.ceil(batch *row["Price"]) # Maximum number of batches of stocks invested in买了batches手股票
+    trade_val =batches *batch *row["Price"] # How much money is put on the line with each trade每次交易花了多少钱
+    if row["Low"] < (1-stoploss) *row["Price"]:   # Account for the stop-loss
+        #此行应该是0.2
+        share_profit =np.round((1-stoploss) *row["Price"], 2) 
+        stop_trig = True
+    else:
+        share_profit = row["Profit"]
+        stop_trig =False
+    profit = share_profit *batches *batch # Compute profits
+    # Add a row to the backtest data frame containing the results of the trade
+    apple_backtest =apple_backtest.append(pd.DataFrame({
+                "Start Port. Value": cash,
+                "End Port. Value": cash + profit,
+                "End Date": row["End Date"],
+                "Shares": batch *batches,
+                "Share Price": row["Price"],
+                "Trade Value": trade_val,
+                "Profit per Share": share_profit,
+                "Total Profit": profit,
+                "Stop-Loss Triggered": stop_trig
+            }, index = [index])) #, index = [index] ???????????????????
+    cash = max(0, cash + profit)   
+pd.set_option('display.max_columns', None) 
+print(apple_backtest,'\n')
+#print(cash)
+apple_backtest['End Port. Value'].plot()
+'''
+
+def ma_crossover_orders(stocks, fast, slow):
+    """
+    :param stocks: A list of tuples, the first argument in each tuple being a string containing the ticker symbol of each stock (or however you want the stock represented, so long as it's unique), and the second being a pandas DataFrame containing the stocks, with a "Close" column and indexing by date (like the data frames returned by the Yahoo! Finance API)
+    :param fast: Integer for the number of days used in the fast moving average
+    :param slow: Integer for the number of days used in the slow moving average
+ 
+    :return: pandas DataFrame containing stock orders
+ 
+    This function takes a list of stocks and determines when each stock would be bought or sold depending on a moving average crossover strategy, returning a data frame with information about when the stocks in the portfolio are bought or sold according to the strategy
+    """
+    fast_str =str(fast) +'d'
+    slow_str =str(slow) +'d'
+    ma_diff_str =fast_str +'-'+slow_str
+ 
+    trades =pd.DataFrame({"Price": [], "Regime": [], "Signal": []})
+    for s in stocks:
+        # Get the moving averages, both fast and slow, along with the difference in the moving averages
+        s[1][fast_str] =np.round(s[1]["Close"].rolling(window =fast, center =False).mean(), 2)
+        s[1][slow_str] =np.round(s[1]["Close"].rolling(window =slow, center =False).mean(), 2)
+        s[1][ma_diff_str] =s[1][fast_str] -s[1][slow_str]
+ 
+        # np.where() is a vectorized if-else function, where a condition is checked for each component of a vector, and the first argument passed is used when the condition holds, and the other passed if it does not
+        s[1]["Regime"] =np.where(s[1][ma_diff_str] > 0, 1, 0)
+        # We have 1's for bullish regimes and 0's for everything else. Below I replace bearish regimes's values with -1, and to maintain the rest of the vector, the second argument is apple["Regime"]
+        s[1]["Regime"] =np.where(s[1][ma_diff_str] < 0, -1, s[1]["Regime"])
+        # To ensure that all trades close out, I temporarily change the regime of the last row to 0
+        regime_orig =s[1].iloc[-1,-1]
+        s[1].iloc[-1,-1] =0
+        s[1]["Signal"] =np.sign(s[1]["Regime"] -s[1]["Regime"].shift(1))
+        # Restore original regime data
+        s[1].iloc[-1,-1] =regime_orig
+ 
+        # Get signals
+        signals =pd.concat([
+            pd.DataFrame({"Price": s[1].loc[s[1]["Signal"] ==1, "Close"],
+                         "Regime": s[1].loc[s[1]["Signal"] ==1, "Regime"],
+                         "Signal": "Buy"}),
+            pd.DataFrame({"Price": s[1].loc[s[1]["Signal"] ==-1, "Close"],
+                         "Regime": s[1].loc[s[1]["Signal"] ==-1, "Regime"],
+                         "Signal": "Sell"}),
+        ])
+        signals.index =pd.MultiIndex.from_product([signals.index, [s[0]]], names =["Date", "Symbol"])
+        trades =trades.append(signals)
+ 
+    trades.sort_index(inplace =True)
+    trades.index =pd.MultiIndex.from_tuples(trades.index, names =["Date", "Symbol"])
+ 
+    return trades
+ 
+ 
+def backtest(signals, cash, port_value =.1, batch =100):
+    """
+    :param signals: pandas DataFrame containing buy and sell signals with stock prices and symbols, like that returned by ma_crossover_orders
+    :param cash: integer for starting cash value
+    :param port_value: maximum proportion of portfolio to risk on any single trade
+    :param batch: Trading batch sizes
+ 
+    :return: pandas DataFrame with backtesting results
+ 
+    This function backtests strategies, with the signals generated by the strategies being passed in the signals DataFrame. A fictitious portfolio is simulated and the returns generated by this portfolio are reported.
+    """
+ 
+    SYMBOL = 1 # Constant for which element in index represents symbol
+    portfolio =dict()    # 用于记录已经股票的量，字典的形式
+    port_prices =dict()  # 用于记录已买股票的价格，字典的形式
+    # Dataframe that will contain backtesting report
+    results =pd.DataFrame({"Start Cash": [],
+                            "End Cash": [],
+                            "Cash And StockValue": [],
+                            "Type": [],
+                            "Hand Shares": [],
+                            "Share Price": [],
+                            "Trade Value": [],
+                            "Profit per Share": [],
+                            "Profit": []})  #Share Value 每次买卖的价值，Profit该次交易的利润
+ 
+    for index, row in signals.iterrows():
+        # These first few lines are done for any trade
+        shares = portfolio.setdefault(index[SYMBOL], 0)  #portfolis已经改变
+        #print("aa+",portfolio,"\n")
+        #print("bb+",type(shares),"\n")
+        trade_val =0
+        batches =0
+        cash_change = row["Price"] *shares   # Shares could potentially be a positive or negative number (cash_change will be added in the end; negative shares indicate a short)
+        
+ 
+        old_price = port_prices.setdefault(index[SYMBOL], row["Price"])
+        #print('cc+',port_prices,"\n")
+        #portfolio_val =0
+        #for key, val in portfolio.items():
+         #   portfolio_val += val *port_prices[key]
+ 
+        if row["Signal"] =="Buy"and row["Regime"] ==1:  # Entering a long position
+            portfolio[index[SYMBOL]] = 0 # For a given symbol, a position is effectively cleared
+            #batches =np.floor((portfolio_val +cash) *port_value) //np.ceil(batch *row["Price"]) # Maximum number of batches of stocks invested in
+            batches =np.floor(cash * port_value) //np.ceil(batch *row["Price"]) # Maximum number of batches of stocks invested in
+            trade_val =batches *batch *row["Price"] # How much money is put on the line with each trade
+            cash_change -= trade_val  # We are buying shares so cash will go down
+            portfolio[index[SYMBOL]] =batches *batch  # Recording how many shares are currently invested in the stock
+            port_prices[index[SYMBOL]] =row["Price"]   # Record price
+            old_price =row["Price"]
+        elif row["Signal"] =="Sell"and row["Regime"] ==-1: # Entering a short
+            old_price = port_prices[index[SYMBOL]]
+            cash_change = (portfolio[index[SYMBOL]]) * row["Price"]
+            
+            
+        #else:
+            #raise ValueError("I don't know what to do with signal " + row["Signal"])
+ 
+        pprofit =row["Price"] -old_price   # Compute profit per share; old_price is set in such a way that entering a position results in a profit of zero
+ 
+        # Update report
+        results =results.append(pd.DataFrame({
+                "Start Cash": cash,
+                "End Cash": cash + cash_change,
+                "Cash And StockValue": cash + cash_change + trade_val,
+                "Type": row["Signal"],
+                "Hand Shares": batch *batches,
+                "Share Price": row["Price"],
+                "Trade Value": abs(cash_change),
+                "Profit per Share": pprofit,
+                "Profit": portfolio[index[SYMBOL]] *pprofit
+            }, index =[index]))
+        cash +=cash_change  # Final change to cash balance
+ 
+    results.sort_index(inplace =True)
+    results.index =pd.MultiIndex.from_tuples(results.index, names =["Date", "Symbol"])
+    #print(portfolio)
+    #print(port_prices)
+ 
+    return results
+
+tsla = web.DataReader('TSLA','yahoo',start,end)
+apple = web.DataReader('AAPL','yahoo',start,end)
+
+'''
+stocks = [('TSLA',tsla.loc[:,['Open','High','Low','Close']]),('AAPL',apple.loc[:,['Open','High','Low','Close']])]
+#stocks = [('TSLA',ohlc_adj(tsla)),('AAPL',ohlc_adj(apple))]
+fast=5
+slow=10
+fast_str =str(fast) +'d'
+slow_str =str(slow) +'d'
+ma_diff_str =fast_str +'-'+slow_str    
+trades =pd.DataFrame({"Price": [], "Regime": [], "Signal": []})    
+for s in stocks:
+    s[1][fast_str] =np.round(s[1]["Close"].rolling(window =fast, center =False).mean(), 2)
+    s[1][slow_str] =np.round(s[1]["Close"].rolling(window =slow, center =False).mean(), 2)
+    s[1][ma_diff_str] =s[1][fast_str] -s[1][slow_str]
+    s[1]["Regime"] =np.where(s[1][ma_diff_str] > 0, 1, 0)
+    # We have 1's for bullish regimes and 0's for everything else. Below I replace bearish regimes's values with -1, and to maintain the rest of the vector, the second argument is apple["Regime"]
+    s[1]["Regime"] =np.where(s[1][ma_diff_str] < 0, -1, s[1]["Regime"])
+    # To ensure that all trades close out, I temporarily change the regime of the last row to 0
+    regime_orig =s[1].iloc[-1,-1]
+    s[1].iloc[-1,-1] =0
+    s[1]["Signal"] =np.sign(s[1]["Regime"] -s[1]["Regime"].shift(1))
+    # Restore original regime data
+    s[1].iloc[-1,-1] =regime_orig
+    signals =pd.concat([
+            pd.DataFrame({"Price": s[1].loc[s[1]["Signal"] ==1, "Close"],
+                         "Regime": s[1].loc[s[1]["Signal"] ==1, "Regime"],
+                         "Signal": "Buy"}),
+            pd.DataFrame({"Price": s[1].loc[s[1]["Signal"] ==-1, "Close"],
+                         "Regime": s[1].loc[s[1]["Signal"] ==-1, "Regime"],
+                         "Signal": "Sell"}),
+        ])
+    #print(signals,"\n")
+    signals.index =pd.MultiIndex.from_product([signals.index, [s[0]]], names =["Date", "Symbol"])  #形成两个index，原来索引index与s[0]
+    #print(signals,"\n")
+    trades =trades.append(signals)
+trades.sort_index(inplace =True)
+trades.index =pd.MultiIndex.from_tuples(trades.index, names =["Date", "Symbol"])  #将(2017-01-17 00:00:00, AAPL)分为两个index
+print(trades)
+signals = ma_crossover_orders([('TSLA',tsla.loc[:,['Open','High','Low','Close']]),('AAPL',apple.loc[:,['Open','High','Low','Close']])],fast=5,slow=10)    
+print(signals)
+'''
+signals = ma_crossover_orders([('TSLA',tsla.loc[:,['Open','High','Low','Close']]),('AAPL',apple.loc[:,['Open','High','Low','Close']])],fast=5,slow=10)    
+#print(signals)
+
+bb = backtest(signals, cash=1000000, port_value =.1, batch =100)
+pd.set_option('display.max_columns', None) 
+print(bb)
+
+#portfolio需要修改，改成已经买了多少价值的股票
