@@ -1,0 +1,71 @@
+'''
+假设当股价高于60日均线时，该股市处于牛市中，则可择时进行做多；
+已5日均线作为买卖信号，CCI指标作为过滤器，当股价高于60日均线，且当时股价高于5日均线，CCI指标处于超买状态下进行做多。
+'''
+import tushare as ts
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib.dates as md
+import talib as ta
+
+#数据处理
+data = ts.get_k_data('hs300','2005-01-01','2018-12-21')
+data.set_index('date',inplace=True)
+data['60_sma'] = data['close'].rolling(60).mean()
+data['CCI'] = ta.CCI(data['high'], data['low'], data['close'], timeperiod=20)
+data['5_sma'] = data['close'].rolling(5).mean()
+#假设当股价高于60日线时说明股价处于牛市中
+data['60_sma_signals'] = np.where(data['60_sma'] < data['close']  , 1 , 0)
+#已5日均线作为买卖信号，CCI指标作为过滤器
+data['5_sma_signals'] = np.where(data['5_sma'] < data['close'], 1 , 0)
+data['CCI_signals'] = np.where(data['CCI'] > 100 , 1 , 0)
+#合并总买卖信号
+data['sum_signals'] = np.where((data['60_sma_signals'] == 1) & (data['5_sma_signals'] == 1) & (data['CCI_signals'] == 1),1,0)
+# print(data['sum_signals'].value_counts())
+
+#对收益率进行处理
+data['returns'] = data['close'].pct_change()
+data['strategys'] = data['sum_signals'].shift(1) * data['returns']
+data['cum_strategys'] = (1 + data['strategys']).cumprod()
+data['cum_returns'] = (1 + data['returns']).cumprod()
+
+#数据可视化
+plt.figure('SMA + CCI',facecolor='gray')
+plt.title('SMA + CCI',fontsize=20)
+plt.xlabel('date',fontsize=14)
+plt.ylabel('date',fontsize=14)
+plt.tick_params(labelsize=10)
+ax = plt.gca()
+ax.xaxis.set_major_locator(md.WeekdayLocator(byweekday=md.MO))
+ax.xaxis.set_minor_locator(md.DayLocator())
+ax.xaxis.set_major_formatter(md.DateFormatter('%d %b %Y'))
+plt.grid(linestyle=':')
+dates = data.index.astype(md.datetime.datetime)
+plt.plot(dates,data['cum_returns'])
+plt.plot(dates,data['cum_strategys'])
+plt.legend()
+plt.show()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
