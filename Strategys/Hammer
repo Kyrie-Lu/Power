@@ -1,0 +1,108 @@
+'''
+以在过去20天内股价下降与锤子K线的出现作为交易信号，出现交易信号的后N(1,或者几天)天放量作为过滤器进行买卖(锤子线那天或者过去平均几天的)
+止损使用移动止损与固定止损：1.固定：当股价小于(成本价 - 一个标准差);2.移动：过去10天的移动平均 - 一个标准差；
+止盈使用
+锤子线要求1.实体的大小/开盘价要小于3%，K线实体不能太大；2.上影线不能/下影线的一半长；3.下影线要比实体的两倍更长才满足条件；
+'''
+import tushare as ts
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import talib
+import matplotlib.dates as md
+
+#数据处理：锤子线指标，移动平均线,标准差
+length = 10
+data = ts.get_k_data('002398','2005-01-01','2018-12-23')
+data.reset_index(inplace=True)
+data['lower'] = data[['close','open']].min(axis=1) - data['low']
+data['higher'] = data['high'] - data[['close','open']].max(axis=1)
+data['10_std'] = data['close'].rolling(10).std()
+data['10_std_max'] = data['10_std'].rolling(10).max()
+data['10_sma'] = data['close'].rolling(10).mean()
+data['yes_vol'] = data['volume'].shift(1)
+data['long_stop_price'] = data['10_sma'] + 3 * data['10_std_max']
+# pd.set_option('display.max_columns', None)
+# print(data.head())
+data['require1'] = np.where(abs(data['open'] - data['close']) / data['open'] < 0.03 , 1 , 0)
+data['require2'] = np.where(data['lower'] == 0 , False , data['higher'] / data['lower'] < 0.5)
+data['require3'] = np.where(abs(data['open'] - data['close']) == 0 , True , data['lower'] / abs(data['open'] - data['close']) > 2)
+data['require4'] = np.where(data['volume'] / data['yes_vol'] >= 1.2 , 1 , 0)
+data['signals'] = data[['require1','require2','require3']].all(axis=1)
+# print(data['signals'].value_counts())
+data['returns'] = data['close'].pct_change()
+# data
+
+#交易逻辑
+flag = 0
+transaction_date = []
+sale_date = []
+for i in range(20,len(data) - 2):
+    if flag == 1:
+        stopPrice = max(long_open_price - long_std,data.loc[i + 2 ,'10_sma'] - data.loc[i + 2,'10_std_max'])
+        # print(stopPrice)
+        #止损
+        if data.loc[i + 2,'low'] < stopPrice:
+            data.loc[i + 2,'strategys'] = min(stopPrice,data.loc[i + 2,'open']) / data.loc[i + 1,'close'] - 1
+            flag = 0
+            sale_date.append(data.loc[i + 2 , 'date'])
+            # print(data.loc[i + 2,'strategys'])
+        #止盈
+        elif data.loc[i + 2,'high'] > data.loc[i + 2,'long_stop_price']:
+            data.loc[i + 2,'strategys'] = data.loc[i + 2,'long_stop_price'] / data.loc[i + 1,'close'] - 1
+            flag = 0
+            sale_date.append(data.loc[i + 2, 'date'])
+            # print(data.loc[i + 2,'strategys'])
+        else:
+            data.loc[i + 2,'strategys'] = data.loc[i + 2,'returns']
+            # print(data.loc[i + 2,'strategys'])
+            # print(555)
+
+    else:
+        if data.loc[i - length ,'10_sma'] > data.loc[i , '10_sma']:
+            # if data.loc[i , 'signals'] == 1 and data.loc[i + 1,'require4'] == 1:
+            if data.loc[i , 'signals'] == 1:
+                flag = 1
+                # print(1)
+                transaction_date.append(data.loc[i + 2 , 'date'])
+                data.loc[i + 2,'strategys'] = data.loc[i + 2,'close'] / data.loc[i + 2,'open'] - 1
+                long_open_price = data.loc[i + 2,'open']
+                long_std = data.loc[i + 2 ,'10_std_max']
+                stopPrice = max(long_open_price - long_std,data.loc[i + 2 ,'10_sma'] - data.loc[i + 2,'10_std_max'])
+                if data.loc[i + 2,'low'] < stopPrice:
+                    data.loc[i + 3,'strategys'] = data.loc[i + 3,'open'] / data.loc[i + 2 ,'close'] - 1
+                    flag = 0
+                    # print(4)
+
+#收益率计算
+data['strategys'].fillna(0,inplace=True)
+data['cum_returns'] = (1 + data['returns']).cumprod()
+data['cum_strategys'] = (1 + data['strategys']).cumprod()
+# print(data['cum_strategys'])
+# print(data['cum_returns'])
+# print(transaction_date)
+# print(sale_date)
+
+plt.figure('ChuiZi',facecolor='gray')
+plt.title('Chuizi',fontsize=20)
+plt.xlabel('date',fontsize=14)
+plt.ylabel('Returns',fontsize=14)
+plt.tick_params(labelsize=10)
+ax = plt.gca()
+ax.xaxis.set_major_locator(md.WeekdayLocator(byweekday=md.MO))
+ax.xaxis.set_minor_locator(md.DayLocator())
+ax.xaxis.set_major_formatter(md.DateFormatter('%d %b %Y'))
+dates = data.index.astype(md.datetime.datetime)
+plt.plot(dates,data['cum_returns'])
+plt.plot(dates,data['cum_strategys'])
+# plt.plot(dates,data['close'])
+# plt.plot(dates,data['10_std_max'])
+# plt.plot(dates,data['10_std'])
+plt.grid()
+plt.legend()
+plt.show()
+
+#实际收益率较低，主要对交易逻辑——循环法进行实操
+
+
+
