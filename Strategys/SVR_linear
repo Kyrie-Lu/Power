@@ -1,0 +1,70 @@
+#对传统机器学习模型进行遍历
+import tushare as ts
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.dates as md
+import sklearn.preprocessing as sp
+import sklearn.svm as svm
+from sklearn.externals import joblib
+
+#数据处理
+# pro = ts.pro_api('8777950b1cc58b7dde48f2655dff6b638c2646ab7b01ed3a76c3477a')
+code = 'hs300'
+start = '20050101'
+end = '20181227'
+# # data = pro.daily(ts_code=code, start_date=start, end_date=end,fields='trade_date,open,high,low,close,vol')
+# data = pro.index_daily(ts_code=code, start_date=start, end_date=end,fields='trade_date,open,high,low,close,vol')
+data = ts.get_k_data('hs300','20050101','20181226')[['open','high','low','close','volume','date']]
+data.set_index('date',inplace=True)
+#对成交量数据进行缩放
+mms = sp.MinMaxScaler(feature_range=(0, 100))
+data_transform = np.array(data['volume'])
+data_Scaler = mms.fit_transform(data_transform.reshape(-1,1))
+data['volume'] = pd.Series(data_Scaler.reshape(1,3159)[0],index=data.index)
+#训练集，测试集进行分类
+data_train_X = data.iloc[:2000,]
+data_train_y = data['close'].iloc[:2001,].shift(-1).iloc[:-1,]
+data_test_X = data.iloc[2000:-1,]
+data_test_y = data['close'].iloc[2000:,].shift(-1).iloc[:-1,]
+
+#模型搭建
+# model = svm.SVR(kernel='linear')
+# model.fit(data_train_X,data_train_y)
+# joblib.dump(model,'model_SVC_linear.pkl')
+model = joblib.load('model_SVC_linear.pkl')
+prediction = model.predict(data_test_X)
+# print(prediction)
+
+#预测结果处理
+data_prediction_returns = pd.DataFrame(data_test_y)
+data_prediction_returns['prediction'] = prediction
+data_prediction_returns = data_prediction_returns.rename(columns = {'close':'next close','prediction':'predict next close'})
+data_open_close = data.iloc[2000:,[0,3]].iloc[:-1]
+data_prediction_returns = pd.merge(data_prediction_returns,data_open_close,left_index=True,right_index=True)
+data_prediction_returns['signals'] = np.where(data_prediction_returns['predict next close'] - data_prediction_returns['close'] > 5 ,1, 0)
+data_prediction_returns['pf'] = np.where(data_prediction_returns['signals'].shift(1) == 1,(data_prediction_returns['close'] - data_prediction_returns['open']) / data_prediction_returns['open'], 0)
+data_prediction_returns['cum_pf'] = (1 + data_prediction_returns['pf']).cumprod()
+data_prediction_returns['returns'] = data_prediction_returns['close'].pct_change()
+data_prediction_returns['cum_returns'] = (1 + data_prediction_returns['returns']).cumprod()
+
+#数据可视化
+plt.figure('SVM_SVR',facecolor='gray')
+plt.title('SVM_SVR',fontsize=20)
+plt.xlabel('date',fontsize=15)
+plt.ylabel('returns',fontsize=15)
+ax = plt.gca()
+ax.xaxis.set_major_locator(md.WeekdayLocator(byweekday=md.MO))
+ax.xaxis.set_minor_locator(md.DayLocator())
+ax.xaxis.set_major_formatter(md.DateFormatter('%d %b %Y'))
+# print(data_prediction_returns.index)
+plt.tick_params(labelsize=10)
+dates = np.array(data_prediction_returns.index).reshape(1,len(data_prediction_returns.index))[0].astype(md.datetime.datetime)
+# print(dates)
+plt.plot(dates,data_prediction_returns['cum_returns'])
+plt.plot(dates,data_prediction_returns['cum_pf'])
+plt.legend()
+plt.grid()
+plt.gcf().autofmt_xdate()
+plt.show()
+
