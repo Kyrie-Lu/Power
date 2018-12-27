@@ -1,0 +1,88 @@
+#利用决策树正向激励进行估价预测
+import sklearn.ensemble as se
+from sklearn.externals import joblib
+import tushare as ts
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.dates as md
+import sklearn.metrics as sm
+from sklearn import svm
+import sklearn.tree as st
+
+#数据获取
+code = 'hs300'
+start = '2005-01-01'
+end = '2018-12-25'
+data = ts.get_k_data(code,start=start,end=end)
+data.set_index('date',inplace=True)
+pd.set_option('display.max_columns', None)
+del data['code']
+data_train_X = data.iloc[:2000,]
+data_train_y = np.array(data['close'].iloc[:2001,].shift(-1))[:-1]
+data_test_X = data.iloc[2000:-1,]
+data_test_y = np.array(data['close'].iloc[2000:,].shift(-1))[:-1]
+
+
+#模型建立
+model = se.AdaBoostRegressor(
+    st.DecisionTreeRegressor(max_depth=4),
+    n_estimators=1000, random_state=7)
+model.fit(data_train_X,data_train_y)
+joblib.dump(model,'AdaBoostRegressor.pkl')
+model = joblib.load('AdaBoostRegressor.pkl')
+prediction = model.predict(data_test_X)
+
+#结果处理
+print(sm.r2_score(data_test_y,prediction))
+data_close = data['close'].iloc[2000:,].shift(-1).iloc[:-1,]
+df_predict = pd.DataFrame(data_close)
+df_predict['prediction'] = prediction
+df_predict = df_predict.rename(columns = {'close': 'Next Close', 'predict':'Predict Next Close'})
+data_open_close = data.iloc[2000:,[0,1]].iloc[:-1,]
+df_predict_all = pd.merge(df_predict,data_open_close,left_index=True,right_index=True)
+df_predict_all['signals'] = np.where(df_predict_all['prediction'] - df_predict_all['close'] > 5, 1 , 0)
+df_predict_all['signals'] = df_predict_all['signals'] .shift(1)
+df_predict_all['pf'] = np.where(df_predict_all['signals'] == 1,(df_predict_all['close'] - df_predict_all['open']) / df_predict_all['open'], 0)
+df_predict_all['cum_pf'] = (1 + df_predict_all['pf']).cumprod()
+df_predict_all['returns'] = df_predict_all['close'].pct_change()
+df_predict_all['cum_returns'] = (1 + df_predict_all['returns']).cumprod()
+
+#数据可视化
+plt.figure('AdaBoostRegressor',facecolor='gray')
+plt.title('AdaBoostRegressor',fontsize=20)
+plt.xlabel('date',fontsize=14)
+plt.ylabel('returns',fontsize=14)
+plt.tick_params(labelsize=10)
+ax = plt.gca()
+ax.xaxis.set_major_locator(md.WeekdayLocator(byweekday=md.MO))
+ax.xaxis.set_minor_locator(md.DayLocator())
+ax.xaxis.set_major_formatter(md.DateFormatter('%Y'))
+ax.xaxis_date()
+ax.autoscale_view()
+plt.grid(linestyle=':')
+dates = df_predict_all.index.astype(md.datetime.datetime)
+plt.plot(dates,df_predict_all['cum_returns'])
+plt.plot(dates,df_predict_all['cum_pf'])
+plt.legend()
+plt.show()
+
+feature_names = data_train_X.columns
+fi_ab = model.feature_importances_
+plt.figure('Feature Importance', facecolor='lightgray')
+plt.title('AdaBoost Decision Tree', fontsize=16)
+plt.ylabel('Importance', fontsize=12)
+plt.tick_params(labelsize=10)
+plt.grid(axis='y', linestyle=':')
+sorted_indices = fi_ab.argsort()[::-1]
+pos = np.arange(sorted_indices.size)
+plt.bar(pos, fi_ab[sorted_indices],
+       facecolor='lightcoral', edgecolor='indianred')
+plt.xticks(pos, feature_names[sorted_indices],
+          rotation=30)
+plt.tight_layout()
+plt.show()
+
+
+
+
