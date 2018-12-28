@@ -1,0 +1,68 @@
+#使用向量机分类器对上涨下跌进行预测，该模型为线性模型
+import tushare as ts
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.dates as md
+import sklearn.preprocessing as sp
+import sklearn.svm as svm
+from sklearn.externals import joblib
+import sklearn.metrics as sm
+
+#数据预处理
+code = 'hs300'
+start = '20050101'
+end = '20181228'
+data = ts.get_k_data(code,start=start,end=end)[['close','low','open','high','volume','date']]
+# data.set_index('date',inplace=True)
+data['next close'] = data['close'].shift(-1)
+data['labels'] = np.where(data['next close'] - data['close'] > 5 , 1 ,0)
+mms = sp.MinMaxScaler(feature_range=(0,100))
+data_transform = np.array(data['volume'])
+data_Scaler = mms.fit_transform(data_transform.reshape(-1,1))
+data['volume'] = pd.Series(data_Scaler.reshape(1,len(data_Scaler))[0],index=data.index)
+# print(data.tail())
+data_train_X = data.iloc[:2000,[0,1,2,3,4]]
+data_train_y = data.iloc[:2000,[7]]
+data_test_X = data.iloc[2000:-1,[0,1,2,3,4]]
+data_test_y = data.iloc[2000:-1,[7]]
+print(len(data_test_X),len(data_test_y))
+
+#模型构建
+# model = svm.SVC(kernel='linear')
+# model.fit(data_train_X,data_train_y)
+# joblib.dump(model,'model_SVC_linear_new.pkl')
+model = joblib.load('model_SVC_linear_new.pkl')
+prediction = model.predict(data_test_X)
+
+#结果处理
+data_prediction_returns = data.iloc[2000:-1,[0,2,5]]
+# data_prediction_returns.set_index('date',inplace=True)
+data_prediction_returns['signals'] = prediction
+# print(data_open_close['signals'].value_counts())
+data_prediction_returns['returns'] = data_prediction_returns['close'].pct_change()
+data_prediction_returns['pf'] = np.where(data_prediction_returns['signals'].shift(1) == 1 ,(data_prediction_returns['close'] - data_prediction_returns['open']) / data_prediction_returns['open'], 0)
+data_prediction_returns['cum_returns'] = (1 + data_prediction_returns['returns']).cumprod()
+data_prediction_returns['cum_pf'] = (1 + data_prediction_returns['pf']).cumprod()
+# print(data_prediction_returns['cum_returns'],data_prediction_returns['cum_pf'])
+
+#数据可视化
+plt.figure('SVM_SVC_linear',facecolor='gray')
+plt.title('SVM_SVR_linear',fontsize=20)
+plt.xlabel('date',fontsize=15)
+plt.ylabel('returns',fontsize=15)
+ax = plt.gca()
+ax.xaxis.set_major_locator(md.YearLocator())
+ax.xaxis.set_minor_locator(md.MonthLocator())
+ax.xaxis.set_major_formatter(md.DateFormatter('%b %Y'))
+# print(data_prediction_returns.index)
+plt.tick_params(labelsize=10)
+dates = pd.to_datetime(data_prediction_returns['date'])
+print(dates)
+# print(dates)
+plt.plot(dates,data_prediction_returns['cum_returns'])
+plt.plot(dates,data_prediction_returns['cum_pf'])
+plt.legend()
+plt.grid()
+plt.show()
+
