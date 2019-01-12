@@ -1,4 +1,5 @@
-#根据前日收盘前半小时数据与今日开盘一小时数据，对今日收盘股价进行预测；其中机器学习模型利为随机森林模型，大盘指数为hs300股指，在15年到18年末，收益率达到5倍（吃惊！！！）
+#根据动量理论，即前日收盘前半小时数据与今日开盘一小时数据预测下午收盘价。实盘时根据预测情况，于10点半对股票进行买入，并于次日开盘进行卖出操作。
+#该策略指数为hs300股指，将08年到15年底的数据设置为训练集，16年到18年设置为测试集，模型使用为朴素贝叶斯，最终得到大约3倍的收益率
 import sklearn.ensemble as se
 from sklearn.externals import joblib
 import tushare as ts
@@ -9,10 +10,11 @@ import matplotlib.dates as md
 import sklearn.metrics as sm
 from sklearn import svm
 import sklearn.tree as st
+import sklearn.naive_bayes as nb
 
 #获得原始数据集，对训练数据进行提取
 data = pd.read_csv('data20190102.csv')
-#由于半小时频率数据有缺失，导致需要对数据先进行处理，以下代码为减去缺失数据的日频数据
+
 data.drop([1998,1999,3998,3999,5998,5999,11229,11230,11231,11232,11233,11234,11235,11236,12101,12102,12103,12104,12105,12106,12107,
            12108,12109,12110,12111,12112,12113,12114,12115,12116,12087,12088,12089,12090,12091,12092,12093,12094,12125,12126,12127,12128,12129,12130,12131,12132,12142,12143,12144,
            12145,12146,12147,12148,12149,12150,12151,12152,12153,12154,12155,12156,12157,12158,12159,12160,12161,12162,12163,12164,
@@ -21,41 +23,34 @@ data.drop([1998,1999,3998,3999,5998,5999,11229,11230,11231,11232,11233,11234,112
            12214,12215,12216,12217,12218,12219,12220,12221,12222,12223,12224,12225,12226,12227,12228,12229,12230,12231,12232,12233,
            12234,12235,12236,12237,12238,12239,12240,12241,12242,12243,12244,12245,12246,12247,12248,12249,12250,12251,12252,12253,
            12254,12255,12256,12257,12258,12259,12260,12261,12262,12326,12327,12328,12329,12330,12331,12332,12333],inplace=True)
+data = data.reset_index()
 
 #从原始数据中提取前一日半小时数据与今日开盘后一小时数据
 data_train = data.iloc[8:12,]
-for i in range(17,13712,9):
+# print(data_train)
+for i in range(17,13536,9):
     data_trainsition = data.iloc[i:i + 4 ,]
     data_train = pd.concat([data_train,data_trainsition])
-
-for i in range(13712,len(data),8):
+for i in range(13544,len(data),8):
     data_trainsition = data.iloc[i:i + 4 ,]
     data_train = pd.concat([data_train, data_trainsition])
-pd.set_option('display.max_columns', None)
+
+#以上部分原始数据处理完成！！！
 
 #对输入数据进行处理
-data_train = data_train.reset_index()
-# print(data_train.head())
-for i in range(0,len(data_train),4):
-    data_train.loc[i,'index_signals'] = i
-    data_train.loc[i + 1,'index_signals'] = i
-    data_train.loc[i + 2,'index_signals'] = i
-    data_train.loc[i + 3,'index_signals'] = i
-data_train.drop([10377,10378,10379],inplace=True)  #去掉最后三行无用数据
+data_train = data_train.reset_index()   #为包含输入数据的frame
 #对标签进行处理
-data_trainAll_y = data_train.iloc[4,]
-# print(data_train_y)
+data_trainAll_y = data_train.iloc[4:5,]
+
 for i in range(8,len(data_train),4):
-    data_train_y_trainsition = data_train.iloc[i,]
+    data_train_y_trainsition = data_train.iloc[i:i + 1,]
     data_trainAll_y = pd.concat([data_trainAll_y,data_train_y_trainsition])
-data_trainAll_y1 = np.array(data_trainAll_y['close']).reshape(-1,1)
-# data_train_y.to_csv('data_train_y.csv')
+
+dates = data_trainAll_y.iloc[1900:-1,]['trade_time']
 
 #将数据分成训练集与测试集 >>>>>> 一.不考虑量的情况下
-#将四行数据进行分整成一行数据
-data_train = data_train.iloc[:,[1,3,4,5,6,8]]
-# data_train.reset_index(inplace=True)
-# print(data_train.head())
+#将四行数据整理成一行数据
+
 data_trainAll_X = pd.DataFrame()
 for i in range(0,len(data_train)-1,4):
     data_trainAll_X.loc[i,'open_15'] = data_train.loc[i,'open']
@@ -75,54 +70,91 @@ for i in range(0,len(data_train)-1,4):
     data_trainAll_X.loc[i,'low_10_30'] = data_train.loc[i + 3,'low']
     data_trainAll_X.loc[i,'close_10_30'] = data_train.loc[i + 3,'close']
 
+
+#朴素贝叶斯标签
+data_trainAll_X['next close'] = np.array(data_trainAll_y['close'])    #从3号的收盘价开始预测
+data_trainAll_X['bayes_signals'] = np.where(data_trainAll_X['next close'] - data_trainAll_X['close_15'] > 5,1,0)
+data_trainAll_y1 = np.array(data_trainAll_X['bayes_signals']).reshape(-1,1)
+# data_trainAll_X.to_csv('data_trainAll.csv')
+# print(data_trainAll_y1)
+
 #数据分类
 data_train_X = data_trainAll_X.iloc[:1900,]
 data_train_y = data_trainAll_y1[:1900]
-data_test_X = data_trainAll_X.iloc[1900:,]
+data_test_X = data_trainAll_X.iloc[1900:,]   #16年1月15号 预测15号股价
 data_test_y = data_trainAll_y1[1900:]
-# print(len(data_train_y))
 
 print('xunlianIng')
-#模型建立
-# model = se.RandomForestRegressor(
-#     max_depth=12, n_estimators=1000,
-#     min_samples_split=8)
-# model.fit(data_train_X, data_train_y)
-# joblib.dump(model,'RandomForestRegressor01.pkl')
-model = joblib.load('RandomForestRegressor01.pkl')
+#朴素贝叶斯模型
+# model = nb.GaussianNB()
+# model.fit(data_train_X,data_train_y)
+# joblib.dump(model,'model_SVC_naive_bayes.pkl')
+model = joblib.load('model_SVC_naive_bayes.pkl')
 prediction = model.predict(data_test_X)
+# print(prediction)
 
 
-#结果处理
-data_resluts = pd.DataFrame(data_trainAll_y['close'][1900:])
-data_resluts = data_resluts.reset_index()
-data_resluts['prediction'] = prediction
-data_resluts = data_resluts.rename(columns = {0: 'next close', 'predict':'Predict Next Close'})
-data_resluts['close'] = data_resluts['next close'].shift(1)
-data_resluts['signals'] = np.where(data_resluts['prediction'] - data_resluts['close'] > 5 ,1,0)
-# print(data_resluts.head(10))
-data_resluts['returns'] = data_resluts['next close'].pct_change()
-data_resluts['pf'] = data_resluts['returns'] * data_resluts['signals']
-data_resluts['cum_returns'] = (1 + data_resluts['returns']).cumprod()
-data_resluts['cum_pf'] = (1 + data_resluts['pf']).cumprod()
-# print(data_resluts['cum_results'],data_resluts['cum_pf'])
-# data_resluts.to_csv('data_results.csv')
+#结果处理   10点半买入操作，第二天早上开盘卖出操作！
+data_results_1 = data.iloc[11:12,]
+data_results_2 = data.iloc[18:19,]
+data_results = pd.concat([data_results_1,data_results_2])
+# print(data_results)
+for i in range(20,13538,9):
+    data_trainsition_1 = data.iloc[i:i + 1,]
+    data_trainsition_2 = data.iloc[i + 7:i + 8,]
+    data_results = pd.concat([data_results,data_trainsition_1, data_trainsition_2])
+data_results = pd.concat([data_results,data.iloc[13538:13539,]])
+for i in range(13545,len(data),8):
+    data_trainsition_1 = data.iloc[i:i + 1, ]
+    data_trainsition_2 = data.iloc[i + 1:i + 2, ]
+    data_results = pd.concat([data_results, data_trainsition_1, data_trainsition_2])
+# data_results = data_results.iloc[:,[1,3,6]]
+data_results = data_results.iloc[:,[3,6]]
+# data_results.to_csv('data-results.csv')
+
+#将预测结果进行整合
+data_results = data_results.reset_index()
+data_results_end = pd.DataFrame()
+data_results_end.loc[0,'close_10_30'] = data_results.loc[0,'close']
+data_results_end.loc[0,'next open'] = data_results.loc[1,'open']
+# print(data_results_end)
+for i in range(2,len(data_results)-1,2):
+    data_results_end.loc[i - 1,'close_10_30'] = data_results.loc[i,'close']
+    data_results_end.loc[i - 1,'next open'] = data_results.loc[i + 1,'open']
+data_results_end = data_results_end.iloc[1900:,]
+data_results_end['prediction'] = np.array(prediction[:-1])   #最后一天不进行买卖
+# print(data_results_end.tail())
+data_results_end['close'] = np.array(data_test_X.loc[:,'close_15'])[:-1]
+data_results_end['index_returns'] = data_results_end['close'].pct_change().shift(-1)
+data_results_end['strategys_returns'] = data_results_end['next open'] / data_results_end['close_10_30'] - 1
+data_results_end['position_returns'] = data_results_end['prediction'] * data_results_end['strategys_returns']
+data_results_end['cum_index_returns'] = (1 + data_results_end['index_returns']).cumprod()
+data_results_end['cum_position_returns'] = (1 + data_results_end['position_returns']).cumprod()
+data_results_end['trade_time'] = pd.to_datetime(np.array(dates))
+data_results_end.set_index('trade_time',inplace=True)
+# data_results_end = data_results_end.reset_index()
+print(data_results_end.head())
+# data_results_end.to_csv('data_results_end.csv')
+
+
+
 #数据可视化
-plt.figure('RandomForest',facecolor='gray')
-plt.title('RandomForest',fontsize=20)
+plt.figure('naive_bayes',facecolor='gray')
+plt.title('naive_bayes',fontsize=20)
 plt.xlabel('date',fontsize=14)
 plt.ylabel('returns',fontsize=14)
 plt.tick_params(labelsize=10)
 ax = plt.gca()
-ax.xaxis.set_major_locator(md.WeekdayLocator(byweekday=md.MO))
-ax.xaxis.set_minor_locator(md.DayLocator())
+ax.xaxis.set_major_locator(md.YearLocator())
+ax.xaxis.set_minor_locator(md.MonthLocator())
 ax.xaxis.set_major_formatter(md.DateFormatter('%Y'))
 ax.xaxis_date()
 ax.autoscale_view()
 plt.grid(linestyle=':')
-dates = data_resluts.index.astype(md.datetime.datetime)
-plt.plot(dates,data_resluts['cum_returns'])
-plt.plot(dates,data_resluts['cum_pf'])
+# dates = data_results_end.index.astype(md.datetime.datetime)
+dates = data_results_end.index
+plt.plot(dates,data_results_end['cum_index_returns'])
+plt.plot(dates,data_results_end['cum_position_returns'])
 plt.legend()
 plt.show()
 
