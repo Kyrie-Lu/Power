@@ -1,0 +1,110 @@
+import sklearn.ensemble as se
+from sklearn.externals import joblib
+import tushare as ts
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.dates as md
+import sklearn.metrics as sm
+from sklearn import svm
+import sklearn.tree as st
+import sklearn.naive_bayes as nb
+import sklearn.model_selection as ms
+import sklearn.linear_model as lm
+
+#获取数据
+def DataGet(code,start,end,i):
+    #数据获取
+    data = ts.get_k_data(code, start=start, end=end)
+    data.set_index('date', inplace=True)
+    for i in range(1, i + 1, 1):
+        data['open_' + str(i) + 'd_train'] = data['open'].shift(i)
+        data['high_' + str(i) + 'd_train'] = data['high'].shift(i)
+        data['low_' + str(i) + 'd_train'] = data['low'].shift(i)
+        data['close_' + str(i) + 'd_train'] = data['close'].shift(i)
+    data_train_x = data[[x for x in data.columns if 'train' in x]]
+    data_train_x = data_train_x.iloc[i:,]
+    data_train_y = np.array(data['close'].iloc[i:, ]).reshape(-1, 1)
+    # data_train_x.to_csv('20190219Hanshu.csv')
+    #数据分类
+    data_train_X = data_train_x.iloc[:int(len(data_train_x)*0.7), ]
+    data_train_Y = data_train_y[:int(len(data_train_x)*0.7)]
+    data_test_X = data_train_x.iloc[int(len(data_train_x)*0.7):-1, ]
+    data_test_Y = data_train_y[int(len(data_train_x)*0.7):-1]
+    return data_train_X,data_train_Y,data_test_X,data_test_Y
+
+
+# print(Hs300[0],Hs300[1])
+
+#模型训练
+def ModelTrain(train_X,train_Y,test_X):
+    # params = [{'max_depth': [30, 31, 32, 33, 34],
+    #            'n_estimators': [100, 200, 300, 400, 500, 600, 700, 800, 900, 1000, 1100, 1200],
+    #            'min_samples_split': [10, 12, 14, 16]}]
+    # model = ms.GridSearchCV(se.RandomForestRegressor(n_jobs=-1), params, cv=5)
+    # model.fit(train_X, train_Y)
+    # for param, score in zip(
+    #         model.cv_results_['params'],
+    #         model.cv_results_['mean_test_score']):
+    #     print(param, score)
+    # print(model.best_params_)
+    # print(model.best_score_)
+    # print(model.best_estimator_)
+    # joblib.dump(model, 'TwoWeekRandomForestRegressor_params.pkl')
+    model = joblib.load('TwoWeekRandomForestRegressor_params.pkl')
+    prediction = model.predict(test_X)
+    return prediction
+
+#结果处理
+def ResultsHandle(prediction,test_X):
+    data_results = pd.DataFrame()
+    data_results['Yes_close'] = np.array(test_X['close_1d_train'])[:-2]
+    data_results['Today_close'] = np.array(prediction)[:-2]  # 15号开始到27号
+    data_results['Today_open'] = np.array(test_X['open_1d_train'])[1:-1]
+    data_results['Tom_open'] = np.array(test_X['open_1d_train'])[2:]
+    data_results['signals'] = np.where(data_results['Today_close'] - data_results['Yes_close'] > 5, 1, 0)
+    data_results['Tom_Today_Rate'] = data_results['Tom_open'] / data_results['Today_open'] - 1
+    data_results['Position_rate'] = data_results['signals'] * data_results['Tom_Today_Rate']
+    data_results['Cum_returns'] = (1 + data_results['Position_rate']).cumprod()
+    data_results['index_rate'] = data_results['Today_open'].pct_change().shift(-1)
+    data_results['cum_index_returns'] = (1 + data_results['index_rate']).cumprod()
+    dates = np.array(test_X.index)[1:-1]
+    data_results['trade_time'] = pd.to_datetime(dates)
+    data_results.set_index(data_results['trade_time'], inplace=True)
+    return data_results
+
+#可视化
+def Matplotlib(Data_results):
+    plt.figure('RandomForest', facecolor='gray')
+    plt.title('RandomForest', fontsize=20)
+    plt.xlabel('Date', fontsize=14)
+    plt.ylabel('Returns', fontsize=14)
+    plt.tick_params(labelsize=10)
+    ax = plt.gca()
+    ax.xaxis.set_major_locator(md.YearLocator())
+    ax.xaxis.set_minor_locator(md.MonthLocator())
+    ax.xaxis.set_major_formatter(md.DateFormatter('%Y'))
+    ax.xaxis_date()
+    ax.autoscale_view()
+    plt.grid(linestyle=':')
+    dates = Data_results.index
+    plt.plot(dates, Data_results['cum_index_returns'])
+    plt.plot(dates, Data_results['Cum_returns'])
+    plt.legend()
+    plt.show()
+
+Hs300 = DataGet('hs300','2008-01-01','2018-12-31',10)
+Model = ModelTrain(Hs300[0],Hs300[1],Hs300[2])
+Matplotlib(ResultsHandle(Model,Hs300[2]))
+
+#比率
+r_day = np.array(ResultsHandle(Model,Hs300[2])['Position_rate'])[:-1]
+rm_day = np.array(ResultsHandle(Model,Hs300[2])['index_rate'])[:-1]
+# print(rm_day)
+Sharpe = r_day.mean()/r_day.std()*(252**0.5)
+SharpeMarket = rm_day.mean()/rm_day.std()*(252**0.5)
+Xinxi = np.mean(r_day - rm_day)/np.std(r_day - rm_day)*(252**0.5)
+print(Sharpe,'\n',SharpeMarket,'\n',Xinxi)
+
+
+
