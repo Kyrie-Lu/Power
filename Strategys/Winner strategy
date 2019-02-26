@@ -1,0 +1,72 @@
+#一揽子股票，形成期为一个月，持有期为一个月，买入收益率最高的二只股票
+import tushare as ts
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+
+pro = ts.pro_api('***')
+#输入为一揽子股票代码，形成一揽子股票月收益率，输出两个月一次收益率从高到底
+def DataHandle(dataList):
+    Predata = pd.DataFrame()
+    #创建待用列表
+    returns_Fisrt_code = []
+    returns_Second_code = []
+    returns_Fisrt = []
+    returns_Second = []
+    #得到每个股票的月收益率，放于一个Dataframe中
+    for i in dataList:
+        data = pro.monthly(ts_code=str(i) + '.SZ', start_date='20160101', end_date='20190110',fields='ts_code,trade_date,open,close')
+        data['month_returns'] = data['close'] / data['open'] - 1
+        Predata[str(i) + '_returns'] = np.array(data['month_returns'])
+        Predata.index = data['trade_date']
+    Predata = Predata.iloc[::-1,]
+    #取出形成期中收益率排名前二的股票名称
+    for i in range(0,len(Predata),2):
+        data_transition = Predata.iloc[i,]
+        data_transition = data_transition.sort_values(ascending=False)
+        data_transition = data_transition[0:2]    #提取收益率前两名的索引，0为排名第一，1为排名第二
+        returns_Fisrt_code.append(str(data_transition.index[0]))
+        returns_Second_code.append(str(data_transition.index[1]))
+    returns_Fisrt_code.pop()
+    returns_Second_code.pop()
+    Predata.reset_index(inplace=True)
+    #取出持有期收益率
+    for i in range(0,17):
+        if Predata.loc[2 * i, returns_Fisrt_code[i]] < 0:
+            returns_Fisrt.append(0)
+            returns_Second.append(0)
+        elif Predata.loc[2 * i, returns_Second_code[i]] < 0 and Predata.loc[2 * i, returns_Fisrt_code[i]] > 0:
+            returns_Fisrt.append(Predata.loc[2 * i + 1, returns_Fisrt_code[i]])
+            returns_Second.append(0)
+        else:
+            returns_Fisrt.append(Predata.loc[2 * i + 1, returns_Fisrt_code[i]])
+            returns_Second.append(Predata.loc[2 * i + 1, returns_Second_code[i]])
+    return returns_Fisrt,returns_Second
+
+#可视化
+def Matplotlib(list1,list2):
+    data_results = pd.DataFrame()
+    data_results['returns_list1'] = np.array(list1)
+    data_results['returns_list2'] = np.array(list2)
+    data_results['position_returns'] = (data_results['returns_list1'] + data_results['returns_list2']) / 2
+    data_results['cum_position_returns'] = (1 + data_results['position_returns']).cumprod()
+    data_results.to_csv('data_results0226.csv')
+    plt.figure('Winner', facecolor='gray')
+    plt.title('Winner', fontsize=20)
+    plt.xlabel('Date', fontsize=14)
+    plt.ylabel('Returns', fontsize=14)
+    plt.tick_params(labelsize=10)
+    plt.grid(linestyle=':')
+    dates = data_results.index
+    plt.plot(dates, data_results['cum_position_returns'])
+    plt.legend()
+    plt.show()
+
+dataList = ['000001','000089','000551','000672']
+print(DataHandle(dataList)[0],DataHandle(dataList)[1])
+Matplotlib(DataHandle(dataList)[0],DataHandle(dataList)[1])
+
+#待优化：1.可同时取上证，深圳，创业板股票；---加入判断
+        2.去掉一揽子股票中存在停牌现象的；---加入len判断
+        3.加入i可买入前几只股票，并在前几只中分配比重。
+
