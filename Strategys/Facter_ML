@@ -1,0 +1,73 @@
+#将因子作为机器学习输入数据，输出为收益率
+import talib as tb
+import tushare as ts
+import pandas as pd
+import numpy as np
+import inspect
+import sklearn.ensemble as se
+import sklearn.model_selection as ms
+from sklearn.externals import joblib
+
+pro = ts.pro_api('***')
+
+def Data_Handle(code,start,end):
+    df_Financial_Report = pro.query('fina_indicator', ts_code=code, start_date=start, end_date=end,fields='dt_eps,bps,ann_date')
+    df_Financial_Report.set_index('ann_date',inplace=True)
+    data = pro.query('daily', ts_code=code, start_date=start, end_date=end,fields='close,amount,trade_date')
+    data = data.iloc[::-1,]
+    data.set_index('trade_date',inplace=True)
+    data['MACD'],data['MACDsignal'],data['MACDhist'] = tb.MACD(np.array(data['close']),fastperiod=12,slowperiod=26,signalperiod=9)
+    data = pd.merge(data,df_Financial_Report,how='outer',left_index=True,right_index=True)
+    data = data.iloc[75:,]
+    data.fillna(method='ffill',inplace=True)
+    data = data.iloc[1:,[0,1,2,5,6]]
+    data['returns'] = data['close'].pct_change()
+    data['closeAdjust'] = (data['close'] - data['close'].min()) / (data['close'].max() - data['close'].min())
+    data['volAdjust'] = (data['amount'] - data['amount'].min()) / (data['amount'].max() - data['amount'].min())
+    data['MacdAdjust'] = (data['MACD'] - data['MACD'].min()) / (data['MACD'].max() - data['MACD'].min())
+    data['epsAdjust'] = (data['dt_eps'] - data['dt_eps'].min()) / (data['dt_eps'].max() - data['dt_eps'].min())
+    data['bqsAdjust'] = (data['bps'] - data['bps'].min()) / (data['bps'].max() - data['bps'].min())
+    data['returnAdjust'] =  data['returns']  #returns不进行调整
+    data_Project = data.iloc[1:,[6,7,8,9,10,11]]
+    # data_Project.to_csv('data0312.csv')
+    return data_Project
+
+#模型训练
+def ModelTrain(data_Project):
+    #分类机器学习
+    data_train_X = data_Project.iloc[:int(len(data_Project) * 0.7),[0,1,2,3,4]]
+    data_train_Y = np.array(data_Project['returnAdjust'].iloc[:int(len(data_Project) * 0.7),]).reshape(1,-1)[0]
+    data_test_X = data_Project.iloc[int(len(data_Project) * 0.7):,[0,1,2,3,4]]
+    data_test_Y = np.array(data_Project['returnAdjust'].iloc[int(len(data_Project) * 0.7):,]).reshape(1,-1)[0]
+
+    #随机森林模型建立
+    # model = se.RandomForestRegressor(
+    #     max_depth=4, n_estimators=1000,
+    #     min_samples_split=2)
+    # model.fit(data_train_X, data_train_Y)
+    # joblib.dump(model,'DuoYinZiRandomForestRegressor_params.pkl')
+    model = joblib.load('DuoYinZiRandomForestRegressor_params.pkl')
+    # feature_names = data_train_X.columns
+    # print(feature_names)
+    # fi_dt = model.feature_importances_
+    # sorted_indices = fi_dt.argsort()[::-1]
+    # print(feature_names[sorted_indices[0]],fi_dt[sorted_indices[0]])
+    prediction = model.predict(data_test_X)
+    return prediction,data_test_X,data_test_Y
+
+#结果处理
+def ResultsHandle(prediction,data_test_Y,data_test_X):
+    data_results = pd.DataFrame()
+    data_results['prediction'] = np.array(prediction)
+    data_results['real_returns'] = data_test_Y
+    data_results['trade_time'] = pd.to_datetime(np.array(data_test_X.index))
+    data_results.set_index(data_results['trade_time'],inplace=True)
+    data_results['signals'] = np.where(data_results['prediction'] > 0 ,1 , 0)
+    data_results.to_csv('data_results.csv')
+
+a = Data_Handle('600055.SH','20160101','20181231')
+b = ModelTrain(a)
+# ResultsHandle(b[0],b[2],b[1])
+
+# print(help(tb.MACD))
+# print(inspect.getsource(tb))
