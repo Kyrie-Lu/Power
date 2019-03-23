@@ -1,0 +1,261 @@
+#天为单位预测股价
+import sklearn.ensemble as se
+from sklearn.externals import joblib
+import tushare as ts
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.dates as md
+import sklearn.metrics as sm
+import sklearn.tree as st
+import sklearn.model_selection as ms
+import datetime
+import matplotlib as mpl
+
+mpl.rcParams['font.sans-serif'] = ['SimHei']
+#获取数据
+def DataGet(code,start,end,day):
+    #数据获取
+    data = ts.get_k_data(code, start=start, end=end)
+    data.set_index('date', inplace=True)
+    for i in range(1, day + 1, 1):
+        data['open_' + str(i) + 'd_train'] = data['open'].shift(i)
+        data['high_' + str(i) + 'd_train'] = data['high'].shift(i)
+        data['low_' + str(i) + 'd_train'] = data['low'].shift(i)
+        data['close_' + str(i) + 'd_train'] = data['close'].shift(i)
+    data_train_x = data[[x for x in data.columns if 'train' in x]]
+    data_train_x = data_train_x.iloc[day:,]
+    data_train_y = np.array(data['close'].iloc[day:, ]).reshape(-1, 1)
+    #数据分类
+    data_train_X = data_train_x.iloc[:int(len(data_train_x)*0.75), ]
+    data_train_Y = data_train_y[:int(len(data_train_x)*0.75)]
+    data_test_X = data_train_x.iloc[int(len(data_train_x)*0.75):-1, ]  
+    data_test_Y = data_train_y[int(len(data_train_x)*0.75):-1]
+    return data_train_X,data_train_Y,data_test_X,data_test_Y
+
+#模型训练
+def ModelTrain(train_X,train_Y,test_X):
+    #随机森林模型
+    # model = se.RandomForestRegressor(max_depth=15, n_estimators=1000, min_samples_split=11)
+    # model.fit(train_X, train_Y)
+    # joblib.dump(model, 'Week_RandomForestRegressor_params.pkl')
+    model = joblib.load('Week_RandomForestRegressor_params.pkl')
+    prediction = model.predict(test_X)
+
+    #结果处理，输出0,1
+    data_results = pd.DataFrame()
+    data_results['Yes_close'] = np.array(test_X['close_1d_train'])[:-2]
+    data_results['Today_Prediction_close'] = np.array(prediction)[:-2]
+    data_results['signals'] = np.where(data_results['Today_Prediction_close'] - data_results['Yes_close'] > 5, 1, 0)
+    signals = np.array(data_results['signals'])
+    print(signals)
+    signals = pd.Series(signals,index=test_X.index[:-2])
+    return signals   #输出当日早盘是否买入信号，index为当日日期
+
+
+#策略执行，买卖个股  ,4月8号开盘价买，返回每日所要交易的股票列表
+def Strategy_Execute(stock_number,signals,list_stock):
+    dateTime = pd.to_datetime(signals.index)
+    date1 = pd.to_datetime('20160613')
+    date2 = pd.to_datetime('20161212')
+    date3 = pd.to_datetime('20170612')
+    date4 = pd.to_datetime('20171211')
+    date5 = pd.to_datetime('20180605')
+    date6 = pd.to_datetime('20181217')
+    stock_trade_dict = {}
+    for a,b in enumerate(dateTime):
+        if b < date1:
+            if signals[a] == 1:
+                print(0)
+                list_trade_stock = list_stock[0]
+                list_trade_stock_10 = Trade_Stock(list_trade_stock,b,stock_number)  #获取收益率前i只股票，格式array
+                stock_trade_dict[b.strftime('%Y%m%d')] = list_trade_stock_10  #字典形式存入，key为日期，value为股票列表
+            else:
+                continue
+        elif date1 <= b and b < date2:
+            if signals[a] == 1:
+                print(1)
+                list_trade_stock = list_stock[1]
+                list_trade_stock_10 = Trade_Stock(list_trade_stock,b,stock_number)  #获取收益率前i只股票，格式array
+                stock_trade_dict[b.strftime('%Y%m%d')] = list_trade_stock_10  #字典形式存入，key为日期，value为股票列表
+            else:
+                continue
+        elif date2 <= b and b < date3:
+            if signals[a] == 1:
+                print(2)
+                list_trade_stock = list_stock[2]
+                list_trade_stock_10 = Trade_Stock(list_trade_stock,b,stock_number)  #获取收益率前i只股票，格式array
+                stock_trade_dict[b.strftime('%Y%m%d')] = list_trade_stock_10  #字典形式存入，key为日期，value为股票列表
+            else:
+                continue
+        elif date3 <= b and b < date4:
+            if signals[a] == 1:
+                print(3)
+                list_trade_stock = list_stock[3]
+                list_trade_stock_10 = Trade_Stock(list_trade_stock,b,stock_number)  #获取收益率前i只股票，格式array
+                stock_trade_dict[b.strftime('%Y%m%d')] = list_trade_stock_10  #字典形式存入，key为日期，value为股票列表
+            else:
+                continue
+        elif date4 <= b and b < date5:
+            if signals[a] == 1:
+                print(4)
+                list_trade_stock = list_stock[4]
+                list_trade_stock_10 = Trade_Stock(list_trade_stock,b,stock_number)  #获取收益率前i只股票，格式array
+                stock_trade_dict[b.strftime('%Y%m%d')] = list_trade_stock_10  #字典形式存入，key为日期，value为股票列表
+            else:
+                continue
+        elif date5 <= b and b < date6:
+            if signals[a] == 1:
+                print(5)
+                list_trade_stock = list_stock[5]
+                list_trade_stock_10 = Trade_Stock(list_trade_stock,b,stock_number)  #获取收益率前i只股票，格式array
+                stock_trade_dict[b.strftime('%Y%m%d')] = list_trade_stock_10  #字典形式存入，key为日期，value为股票列表
+            else:
+                continue
+        elif date6 <= b:
+            if signals[a] == 1:
+                print(6)
+                list_trade_stock = list_stock[6]
+                list_trade_stock_10 = Trade_Stock(list_trade_stock,b,stock_number)  #获取收益率前i只股票，格式array
+                stock_trade_dict[b.strftime('%Y%m%d')] = list_trade_stock_10  #字典形式存入，key为日期，value为股票列表
+            else:
+                continue
+    stock_trade_Dataframe = pd.DataFrame(stock_trade_dict)
+    return stock_trade_Dataframe
+
+#账户执行
+def Account_Execute(stock_DataFrame,initial_fund):
+    stock_DataFrame = stock_DataFrame.T
+    stock_DataFrame.drop(labels='Unnamed: 0',inplace=True)
+    stock_DataFrame.index = pd.to_datetime(stock_DataFrame.index)
+    final_fund = {}
+    for Date in stock_DataFrame.index:
+        code_price_open = []
+        code_price_close = []
+        for code in np.array(stock_DataFrame.loc[[Date],])[0]:
+            open_price = pro.daily(ts_code=code, start_date=Date.strftime('%Y%m%d'), end_date=Date.strftime('%Y%m%d'), fields = 'open')
+            code_price_open.append(open_price.iloc[0,0])
+            for num in range(1,1000,1):
+                close_price = pro.daily(ts_code=code, start_date=(Date + datetime.timedelta(days=num)).strftime('%Y%m%d'), end_date=(Date + datetime.timedelta(days=num)).strftime('%Y%m%d'), fields='open')
+                if len(close_price) != 0:
+                    break
+            code_price_close.append(close_price.iloc[0,0])
+        code_price_open = np.array(code_price_open)
+        code_price_close = np.array(code_price_close)
+        code_number = (initial_fund * 0.8 / 10) / code_price_open
+        code_number = np.floor(code_number / 100)   #输出为几手
+        buy_expense = (code_number * 100 * code_price_open) / 10000 * 10
+        retain_fund = initial_fund - (code_number * 100 * code_price_open).sum() - buy_expense.sum()
+        print('retain_fund:',retain_fund)
+        code_fund = code_number * 100 * code_price_close
+        sell_expense = code_fund / 10000 * 15
+        initial_fund = code_fund.sum() + retain_fund - sell_expense.sum()
+        final_fund[Date.strftime('%Y%m%d')] = initial_fund
+        print(code_fund.sum() - (code_number * 100 * code_price_open).sum())
+        print(Date,initial_fund)
+    final_fund_Frame = pd.DataFrame(final_fund,index=range(len(final_fund)))
+    final_fund_Frame.to_csv('final_fund_Frame.csv')
+
+#获取每次交易前10只股票列表
+def Trade_Stock(list_trade_stock,date,stock_number):
+    data_market = pd.DataFrame()
+    for i in list_trade_stock:
+        transition = pd.DataFrame()
+        df_open = pro.daily(ts_code=i, start_date=(date - datetime.timedelta(days=7)).strftime('%Y%m%d'), end_date=(date - datetime.timedelta(days=7)).strftime('%Y%m%d'), fields='open')
+        df_close = pro.daily(ts_code=i, start_date=date.strftime('%Y%m%d'), end_date=date.strftime('%Y%m%d'), fields = 'close')
+        if len(df_open) == 0 or len(df_close) == 0:
+            continue
+        transition.loc[0,'open'] = df_open.iloc[0,0]
+        transition.loc[0,'close'] = df_close.iloc[0,0]
+        transition.loc[0,'code'] = i
+        data_market = pd.concat([data_market,transition])
+    if len(data_market) == 0:
+        Prestock_list = np.array([1,2,3,4,5,6,7,8,9,10])
+        return Prestock_list
+    else:
+        data_market['returns'] = (data_market['close'] / data_market['open']) - 1
+        data_market_sort = data_market.sort_values('returns')
+        Prestock_list = np.array(data_market_sort['code'])[-stock_number:]
+        return Prestock_list
+
+#获取每期沪深300成分股
+def List_Stock():
+    df0 = pro.index_weight(index_code='399300.SZ', start_date='20160320', end_date='20160331')
+    df1 = pro.index_weight(index_code='399300.SZ', start_date='20160615', end_date='20160630')
+    df2 = pro.index_weight(index_code='399300.SZ', start_date='20161215', end_date='20161231')
+    df3 = pro.index_weight(index_code='399300.SZ', start_date='20170615', end_date='20170630')
+    df4 = pro.index_weight(index_code='399300.SZ', start_date='20171220', end_date='20171231')
+    df5 = pro.index_weight(index_code='399300.SZ', start_date='20180610', end_date='20180631')
+    df6 = pro.index_weight(index_code='399300.SZ', start_date='20181220', end_date='20181231')
+    list0 = np.array(df0['con_code'])
+    list1 = np.array(df1['con_code'])
+    list2 = np.array(df2['con_code'])
+    list3 = np.array(df3['con_code'])
+    list4 = np.array(df4['con_code'])
+    list5 = np.array(df5['con_code'])
+    list6 = np.array(df6['con_code'])
+    list = np.array([list0,list1,list2,list3,list4,list5,list6])
+    return list
+
+#结果处理
+def ResultsHandle(final_fund_Frame,test_X):
+    pd.set_option('display.max_columns', None)
+    final_fund_Frame = final_fund_Frame.iloc[0:1,]
+    final_fund_Frame = final_fund_Frame.T
+    final_fund_Frame = final_fund_Frame[1:]
+    test_X['close_returns'] = test_X['close_1d_train'].shift(-1)
+    test_X['returns'] = test_X['close_returns'].pct_change()
+    test_X.index = pd.to_datetime(test_X.index)
+    final_fund_Frame.index = pd.to_datetime(final_fund_Frame.index)
+    test_X = pd.merge(test_X,final_fund_Frame,how='outer',right_index=True,left_index=True)
+    test_X.fillna(method='ffill',inplace=True)
+    test_X.rename(columns={0:'position_returns'},inplace=True)
+    test_X['指数累计收益率'] = (1 + test_X['returns']).cumprod()
+    test_X['策略累计收益率'] = test_X['position_returns'] / 1000000
+    return test_X
+
+#可视化
+def Matplotlib(Data_results):
+    plt.figure('RandomForest', facecolor='white')
+    plt.title('周为形成期策略收益率曲线图', fontsize=20)
+    plt.xlabel('日期', fontsize=14)
+    plt.ylabel('累计收益率', fontsize=14)
+    plt.tick_params(labelsize=10)
+    ax = plt.gca()
+    ax.xaxis.set_major_locator(md.YearLocator())
+    ax.xaxis.set_minor_locator(md.MonthLocator())
+    ax.xaxis.set_major_formatter(md.DateFormatter('%Y'))
+    ax.xaxis_date()
+    ax.autoscale_view()
+    plt.grid(linestyle=':')
+    dates = Data_results.index
+    plt.plot(dates, Data_results['指数累计收益率'],c='black',linestyle=':')
+    plt.plot(dates, Data_results['策略累计收益率'],c='black',linestyle='-')
+    plt.legend()
+    plt.show()
+
+pro = ts.pro_api('***************')
+Hs300 = DataGet('hs300','2008-01-01','2018-12-31',5)    #5为周效应
+# Model = ModelTrain(Hs300[0],Hs300[1],Hs300[2])          #训练模型输出prediction
+# list_stock = List_Stock()                              #获取沪深300股票列表
+# stock_DataFrame = Strategy_Execute(10,Model,list_stock)
+# stock_DataFrame.to_csv('stock_DataFrame666_week_RandomForest.csv')
+# Trade_Stock(list_stock[0],pd.to_datetime('20181012'),10)
+# stock_DataFrame = pd.read_csv('stock_DataFrame000_week_RandomForest.csv')
+# Account_Execute(stock_DataFrame,1000000)
+final_fund_Frame = pd.read_csv('final_fund_Frame.csv')
+result = ResultsHandle(final_fund_Frame,Hs300[2])
+Matplotlib(result)
+
+#比率
+# r_day = np.array(ResultsHandle(Model,Hs300[2])['Position_rate'])[:-1]
+# rm_day = np.array(ResultsHandle(Model,Hs300[2])['index_rate'])[:-1]
+# # print(rm_day)
+# Sharpe = r_day.mean()/r_day.std()*(252**0.5)
+# SharpeMarket = rm_day.mean()/rm_day.std()*(252**0.5)
+# Xinxi = np.mean(r_day - rm_day)/np.std(r_day - rm_day)*(252**0.5)
+# print(Sharpe,'\n',SharpeMarket,'\n',Xinxi)
+
+
+
+
