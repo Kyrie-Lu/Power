@@ -1,0 +1,114 @@
+import tushare as ts
+import pandas as pd
+import numpy as np
+
+pro = ts.pro_api('8777950b1cc58b7dde48f2655dff6b638c2646ab7b01ed3a76c3477a')
+
+#获取12年以来每半年的沪深300指数个股代码
+def List_Stock():
+    start_date = ['20120620','20121201','20130620','20131201','20140620','20141201',
+                  '20150620','20151201','20160620','20161201','20170620','20171220','20180620','20181220']
+    end_date = ['20120630','20121231','20130630','20131231','20140630','20141230',
+                '20150630','20151230','20160630','20161229','20170630','20171230','20180630','20181230']
+    list = np.zeros((1,300)) #由于append指数需要前后格式相同，添加一个数组进行传递
+    for a,b in zip(start_date,end_date):
+        df0 = pro.index_weight(index_code='399300.SZ', start_date=a, end_date=b)
+        list0 = np.array(df0['con_code']).reshape((1,300)) #将多维数组变为一维数组
+        list = np.append(list,list0,axis=0)  #将每半年的个股代码添加到数组中
+    list = list[1:]   #去掉第一组传递项
+    return list
+
+#根据个股获取各个个股的财务指标,计算因子贡献度
+def Facter_Contribution(StockList,StartDate,EndDate,FinancialRatios):
+    data = pro.query('fina_indicator', ts_code=StockList[0], start_date=StartDate, end_date=EndDate, fields=FinancialRatios)
+    data = data.mean()  #获取年平均
+    data = pd.DataFrame(data).T   #进行转置   #此两行代码可用grounp()进行替代  data = data.grounp('ts_code').mean()
+    for stock in StockList[1:]:
+        print(stock)
+        df = pro.query('fina_indicator', ts_code=stock, start_date=StartDate, end_date=EndDate, fields=FinancialRatios)
+        df = df.mean()
+        df = pd.DataFrame(df).T
+        data = pd.concat([data,df])
+    data.index = StockList  #data为每个个股的财务数据
+    # data.to_csv('20190701_mean.csv')
+    #可以不用先创建一个，直接令pd.Dataframe为空，然后pd.concat([])
+    data_begin0 = pro.daily(ts_code=StockList[0], start_date='20140106', end_date='20140106', fields='ts_code,open')
+    data_begin0.set_index('ts_code', inplace=True)
+    data_end0 = pro.daily(ts_code=StockList[0], start_date='20140930', end_date='20140930', fields='ts_code,close')
+    data_end0.set_index('ts_code', inplace=True)
+    data_Price = pd.merge(data_begin0, data_end0, how='outer', left_index=True, right_index=True)
+    print('--------------------------------------------------------------')
+    for stock in StockList[1:]:
+        print(stock)
+        data_begin = pro.daily(ts_code=stock, start_date='20140106', end_date='20140106',fields='ts_code,open')
+        data_begin.set_index('ts_code',inplace=True)
+        data_end = pro.daily(ts_code=stock, start_date='20140930', end_date='20140930', fields='ts_code,close')
+        data_end.set_index('ts_code', inplace=True)
+        df = pd.merge(data_begin,data_end,how='outer',left_index=True,right_index=True)
+        data_Price = pd.concat([data_Price,df])
+        # print(stock)
+    # data.to_csv('20190701_price.csv')
+    # DataFinancial = pd.read_csv('20190701_mean.csv')
+    # DataFinancial.rename(columns={'Unnamed: 0':'ts_code'},inplace=True)
+    # DataFinancial.set_index('ts_code',inplace=True)
+    # print(DataFinancial)
+    # DataPrice = pd.read_csv('20190701_price.csv')
+    # DataPrice.set_index('ts_code',inplace=True)
+    # print(DataPrice)
+    DataAll = pd.merge(data,data_Price,how='outer',left_index=True,right_index=True)
+    # print(DataAll)
+    DataAll['returns'] = DataAll['open'] / DataAll['close']
+    DataAll.dropna(how='any',axis=0,inplace=True)
+    data_sort = DataAll.sort_values('returns')
+    data_sort20 = np.array(data_sort['returns'])[-20:].mean()
+    data_sort_20 = np.array(data_sort['returns'])[:20].mean()
+    retruns_Standad = data_sort20 - data_sort_20  #1.4819
+    print(retruns_Standad)
+    Facter_Score = {}
+    for i in DataAll.columns:
+        print(i)
+        data_sort = DataAll.sort_values(i)
+        print(data_sort)
+        data_sort20 = np.array(data_sort['returns'])[-20:].mean()
+        data_sort_20 = np.array(data_sort['returns'])[:20].mean()
+        Score = (data_sort20 - data_sort_20) / retruns_Standad
+        Facter_Score[i] = Score
+        print('-----------------------------------------------')
+    Series_Facter_Score = pd.Series(Facter_Score)
+    print(Series_Facter_Score.sort_values())
+
+def Stock_Score(StockList,StartDate,EndDate,FinancialRatios):
+    data_financial = pd.DataFrame()
+    for stock in StockList:
+        # print(stock)
+        data = pro.query('fina_indicator', ts_code=stock, start_date=StartDate, end_date=EndDate,fields=FinancialRatios)
+        data_financial = pd.concat([data_financial,data])
+        # print(data_financial)
+    print(data_financial)
+
+    FinancialRatios = 'fa_turn,assets_turn,quick_ratio,dt_eps,eps,bps'
+    for i in FinancialRatios.split(','):
+        data_financial = data_financial.sort_values(i)
+        data_financial['score_' + i] = np.array(range(1,len(data_financial) + 1))
+    # print(data_financial)
+    data_financial.set_index('ts_code',inplace=True)
+    data_financial = data_financial[[x for x in data_financial.columns if 'score_' in x]]
+    # print(data_financial)
+    data_financial['score_all'] = data_financial.sum(axis=1)
+    print(data_financial.sort_values('score_all'))
+
+def Strategy_Returns(StockList,StartDate,EndDate):
+    Data_Returns = pd.DataFrame()
+    for stock in StockList:
+        print(stock)
+        data_begin = pro.daily(ts_code=stock, start_date=StartDate, end_date=StartDate, fields='ts_code,open')
+        data_begin.set_index('ts_code', inplace=True)
+        data_end = pro.daily(ts_code=stock, start_date=EndDate, end_date=EndDate, fields='ts_code,close')
+        data_end.set_index('ts_code', inplace=True)
+        df = pd.merge(data_begin, data_end, how='outer', left_index=True, right_index=True)
+        Data_Returns = pd.concat([Data_Returns, df])
+    print(Data_Returns)
+    Data_Returns['returns'] = Data_Returns['close'] / Data_Returns['open']
+    Data_Returns.dropna(how='any',axis=0,inplace=True)
+    returns = np.array(Data_Returns['returns']).sum() / len(Data_Returns)
+    print(returns)
