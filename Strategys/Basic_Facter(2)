@@ -1,0 +1,109 @@
+'''
+以沪深300作为选股列表，将5年自由现金流为作正做为第一个筛选因子，接着使用市值，流动比率，roe，营收成长率，稀释eps
+成长率作为因子，进行打分，买入得分最高的10个股票，持有期为1年，实际效果较差
+'''
+import tushare as ts
+import pandas as pd
+import numpy as np
+import datetime
+
+
+pro = ts.pro_api('********')
+
+#获取沪深300股票代码
+def List_Stock():
+    start_date = ['20160620','20161201','20170620','20171220','20180620','20181220']
+    end_date = ['20160630','20161229','20170630','20171230','20180630','20181230']
+    list = np.zeros((1,300)) #由于append指数需要前后格式相同，添加一个数组进行传递
+    for a,b in zip(start_date,end_date):
+        df0 = pro.index_weight(index_code='399300.SZ', start_date=a, end_date=b)
+        list0 = np.array(df0['con_code']).reshape((1,300)) #将多维数组变为一维数组
+        list = np.append(list,list0,axis=0)  #将每半年的个股代码添加到数组中
+    list = list[1:]   #去掉第一组传递项
+    return list
+
+#计算市值，流动比率，roe平均值
+def DateCandle(list,StartDate,EndDate):
+    data0为处理市值因子
+    data0 = pd.DataFrame()
+    for stock in list:
+        df = pro.daily_basic(ts_code=stock, trade_date=StartDate,fields='ts_code,total_mv')
+        print('1')
+        data0 = pd.concat([data0,df])
+    data0.set_index('ts_code',inplace=True)
+    # #data1为处理roe与流动比率因子
+    data1 = pd.DataFrame()
+    print('over0')
+    for stock in list:
+        df = pro.query('fina_indicator', ts_code=stock, start_date=StartDate, end_date=EndDate,fields='ts_code,ann_date,roe,current_ratio')
+        print(stock)
+        data1 = pd.concat([data1,df])
+    data1.set_index('ts_code', inplace=True)
+    #data2处理五年来自由现金流
+    data2 = pd.DataFrame()
+    for stock in list:
+        df = pro.cashflow(ts_code=stock, start_date=(pd.to_datetime(StartDate) - datetime.timedelta(days=1825)).strftime('%Y%m%d'), end_date=EndDate,fields='ts_code,free_cashflow')
+        df.fillna(0, inplace=True)
+        a = np.array(df['free_cashflow'])
+        b = 0
+        for i in a:
+            if i < 0:
+                b = 1
+                break
+        if b == 1:
+            continue
+        df = df.groupby('ts_code').mean()
+        # df.set_index('ts_code',inplace=True)
+        data2 = pd.concat([data2,df])
+    data = pd.merge(data0,data1,left_index=True,right_index=True)
+    data = pd.merge(data,data2,left_index=True,right_index=True)
+    data.to_csv('indicator1.csv')
+    data = pd.read_csv('indicator1.csv')
+    data.set_index('ts_code',inplace=True)
+    # print(data)
+    data3 = pd.DataFrame()
+    for stock in data.index:
+        # print(stock)
+        df = pro.query('fina_indicator', ts_code=stock, start_date=(pd.to_datetime(StartDate) - datetime.timedelta(days=365)).strftime('%Y%m%d'), end_date=EndDate, fields='ts_code,ann_date,or_yoy,dt_eps_yoy')
+        df = df.groupby('ts_code').mean()
+        data3 = pd.concat([data3,df])
+    data = pd.merge(data,data3,left_index=True,right_index=True)
+    data.drop(['ann_date'],axis=1,inplace=True)
+    print(data)
+    return data
+
+#对因子进行打分
+def FacterScore(data):
+    data_financial = data
+    for i in data.columns:
+        if i == 'total_mv':
+            data_financial = data_financial.sort_values(i,ascending=False)
+            data_financial['score_' + i] = np.array(range(1, len(data) + 1))
+        data_financial = data_financial.sort_values(i)
+        data_financial['score_' + i] = np.array(range(1,len(data) + 1))
+    data_financial = data_financial[[x for x in data_financial.columns if 'score_' in x]]
+    data_financial['score_all'] = data_financial.sum(axis=1)
+    data_financial = data_financial.sort_values('score_all')
+    data_code = np.array(data_financial.index)[-10:]
+    return data_code
+
+def Strategy_Returns(StockList,StartDate,EndDate):
+    Data_Returns = pd.DataFrame()
+    for stock in StockList:
+        data_begin = pro.daily(ts_code=stock, start_date=StartDate, end_date=StartDate, fields='ts_code,open')
+        data_begin.set_index('ts_code', inplace=True)
+        data_end = pro.daily(ts_code=stock, start_date=EndDate, end_date=EndDate, fields='ts_code,close')
+        data_end.set_index('ts_code', inplace=True)
+        df = pd.merge(data_begin, data_end, how='outer', left_index=True, right_index=True)
+        Data_Returns = pd.concat([Data_Returns, df])
+    print(Data_Returns)
+    Data_Returns['returns'] = Data_Returns['close'] / Data_Returns['open']
+    Data_Returns.dropna(how='any',axis=0,inplace=True)
+    returns = np.array(Data_Returns['returns']).sum() / len(Data_Returns)
+    print(returns)
+
+# list = List_Stock()
+list = 0
+data = DateCandle(list,'20151231','20160104')
+data_code = FacterScore(data)
+Strategy_Returns(data_code,'20160509','20170508')
