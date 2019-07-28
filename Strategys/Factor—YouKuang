@@ -1,0 +1,55 @@
+def data_candle(context):
+    '''
+    1.五年平均盈余计算的PE大于市场平均值的70%
+    2.股价现金流量比低于市场平均值的0.75
+    3.长期借款占总资本比率低于0.5
+    4.市净率低于市场均值的0.8
+    5.流动比率高于市场均值
+
+    '''
+    universe = context.get_universe(exclude_halt=True)
+    data = DataAPI.MktStockFactorsOneDayGet(tradeDate=context.previous_date,secID=universe,
+                                            field='secID,PB,ETP5,PCF,CurrentRatio,LongDebtToAsset', pandas='1') 
+    data = data.dropna()
+    data.set_index('secID',inplace=True)
+    data = data[data['PCF'] > 0]
+    # print(data)
+    data = data[(data['ETP5'] > 0.7 * data['ETP5'].mean()) & (data['PCF'] < 0.75 * data['PCF'].mean()) & 
+                (data['LongDebtToAsset'] < 0.5) & (data['PB'] < 0.8 * data['PB'].mean()) & 
+                (data['CurrentRatio'] > data['CurrentRatio'].mean())]
+    buylist = list(data.index)
+    return buylist
+
+def buy_stock(context, buylist):
+    account = context.get_account('Kyrie_account')
+    current_positions = account.get_positions()
+    cash = account.cash
+    
+    for stock in set(current_positions).difference(buylist):
+        account.order_to(stock, 0)
+    
+    d = min(len(buylist), int(cash) // context.max_position)
+    print(d)
+    for stock in buylist[:d]:
+        if stock not in current_positions:
+            account.order(stock, context.max_position / context.current_price(stock))
+            
+start = '2019-01-01'                       # 回测起始时间
+end = '2019-07-01'                         # 回测结束时间
+universe = DynamicUniverse('A')        # 证券池，支持股票、基金、期货、指数四种资产
+benchmark = 'HS300'                        # 策略参考标准
+freq = 'd'                                 # 策略类型，'d'表示日间策略使用日线回测，'m'表示日内策略使用分钟线回测
+refresh_rate = 20                           # 调仓频率，表示执行handle_data的时间间隔，若freq = 'd'时间间隔的单位为交易日，若freq = 'm'时间间隔为分钟
+  
+# 配置账户信息，支持多资产多账户
+accounts = {
+    'Kyrie_account': AccountConfig(account_type='security', capital_base=10000000)
+}
+  
+def initialize(context):
+    context.max_position = 500000
+  
+# 每个单位时间(如果按天回测,则每天调用一次,如果按分钟,则每分钟调用一次)调用一次
+def handle_data(context):    
+    buylist = data_candle(context)
+    buy_stock(context, buylist)
