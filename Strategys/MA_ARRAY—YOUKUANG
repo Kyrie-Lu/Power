@@ -1,0 +1,76 @@
+import pandas as pd
+import numpy as np
+import talib as ta
+
+def data_candle(context, short, mid, long, time_range, threshold):
+    account = context.get_account('Kyrie_account')
+    universe = context.get_universe(exclude_halt=True)
+    data = context.history(symbol=universe, attribute=['closePrice','lowPrice'], time_range=time_range, rtype='array')
+    positions = account.get_positions()
+    # print(positions)
+    buylist = []
+    selllist = []
+    
+    for stock in universe:
+        close = data[stock]['closePrice']
+        low = data[stock]['lowPrice']
+        short_ma = ta.MA(close, short)
+        mid_ma = ta.MA(close, mid)
+        long_ma = ta.MA(close, long)
+        if short_ma[-1] > mid_ma[-1] and mid_ma[-1] > long_ma[-1] and close[-1] <= short_ma[-1] and stock not in positions:
+            buylist.append(stock)
+        elif (((short_ma[-2] > mid_ma[-2] and short_ma[-1] < mid_ma[-1]) or (close[-1] <= mid_ma[-1]) or
+             ((low[-1] - short_ma[-1]) / short_ma[-1] >= threshold)) and (stock in positions)):
+            selllist.append(stock)
+    list = {'buylist':buylist, 'selllist':selllist}
+    # print(list)
+    return list
+
+def trading_candle(context, buy_sell_list, max_position):
+    universe = context.get_universe(exclude_halt=True)
+    account = context.get_account('Kyrie_account')
+    buylist = buy_sell_list['buylist']
+    selllist = buy_sell_list['selllist']
+    # print(selllist)
+    positions = account.get_positions()
+    # print(positions)
+    
+    for stock in universe:
+        if stock  in selllist and stock in positions:
+            account.order_to(stock, 0)
+    if len(buylist) > 0:
+        weight = min(max_position, 1.0 / len(buylist))
+    else:
+        weight = 0    
+    print(weight)
+    for stock in buylist:
+        if stock not in positions:
+            account.order_pct_to(stock, weight)
+            
+start = '2014-12-01'                       # 回测起始时间
+end = '2015-06-01'                         # 回测结束时间
+universe = DynamicUniverse('HS300').apply_filter(Factor.PE.nlarge(100))      # 证券池，支持股票、基金、期货、指数四种资产
+benchmark = 'HS300'                        # 策略参考标准
+freq = 'd'                                 # 策略类型，'d'表示日间策略使用日线回测，'m'表示日内策略使用分钟线回测
+refresh_rate = 1                    # 调仓频率，表示执行handle_data的时间间隔，若freq = 'd'时间间隔的单位为交易日，若freq = 'm'时间间隔为分钟
+  
+# 配置账户信息，支持多资产多账户
+accounts = {
+    'Kyrie_account': AccountConfig(account_type='security', capital_base=10000000)
+}
+max_position = 0.1
+max_history_window = 250
+max_time_range = 60
+short_time = 5
+mid_time = 10
+long_time = 20
+threshold = 0.05
+
+def initialize(context):
+    pass
+  
+# 每个单位时间(如果按天回测,则每天调用一次,如果按分钟,则每分钟调用一次)调用一次
+def handle_data(context):    
+    buy_sell_list = data_candle(context, short_time, mid_time, long_time, max_time_range, threshold)
+    trading_candle(context, buy_sell_list, max_position)
+        
