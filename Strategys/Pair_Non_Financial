@@ -1,0 +1,111 @@
+#对非金融行业进行协整判断，根据价差进行买卖，实际按形成期为年与持有期为年效果较差，N初始假设为1（可进行参数调整），形成期与持有期可设置为月
+import numpy as np
+import pandas as pd
+from statsmodels.tsa.stattools import adfuller
+from statsmodels.tsa.stattools import coint
+
+#获取同阶单整股票列表
+def Stock_list(industry, industry_data, BeginDate, EndDate):
+    universe = set_universe(industry, industry_data)   #非银证券      IndSW.YinHangL1 银行
+    sec = []
+    for stock in universe:
+        data = DataAPI.MktEqudGet(secID=stock,beginDate=BeginDate,endDate=EndDate,field=['closePrice'],pandas="1")
+        if len(data) == 0:
+            continue
+        data = data.diff(1)
+        data = data.dropna()
+        data = np.array(data).T[0]
+        results = adfuller(data)
+        if results[1] < 0.005:
+            sec.append(stock)
+    return sec
+list = Stock_list(IndSW.FeiYinJinRongL1, '20150101', '20150101', '20160101')
+
+#获取配对股票
+def Sec_Pair(list, BeginDate, EndDate):
+    sec_pair = {}
+    for i in range(len(list)):
+        for j in range(i + 1, len(list)):
+            data1 = DataAPI.MktEqudGet(secID=list[i],beginDate=BeginDate,endDate=EndDate,field=['closePrice'],pandas="1")
+            data2 = DataAPI.MktEqudGet(secID=list[j],beginDate=BeginDate,endDate=EndDate,field=['closePrice'],pandas="1")
+            x = np.array(data1)
+            y = np.array(data2)
+            a, pvalue, b = coint(x,y)
+            if pvalue < 0.05:
+                sec_transition = [list[i], list[j]]
+                sec_pair[pvalue] = sec_transition
+                # print(sec_pair)
+    sec_pair = pd.Series(sec_pair)
+    sec_pair = sec_pair.sort_index()
+    sec_pair = sec_pair.values
+    return sec_pair[:10]
+sec_pair_list = Sec_Pair(list, '20150101', '20160101')  #输出形式为列表套列表形式[[],[],......]
+print(sec_pair_list)
+
+
+#计算价差函数
+def PriceSpread(sec, BeginDate, EndDate, N):
+    data1 = DataAPI.MktEqudGet(secID=sec[0],beginDate=BeginDate,endDate=EndDate,field=['closePrice'],pandas="1")
+    data2 = DataAPI.MktEqudGet(secID=sec[1],beginDate=BeginDate,endDate=EndDate,field=['closePrice'],pandas="1")
+    mean = (data1 - data2).mean()
+    std = (data1 - data2).std()
+    # print(mean,std)
+    upper = mean[0] + std[0] * N
+    lower = mean[0] - std[0] * N
+    return upper, lower
+# spread = PriceSpread(['600369.XSHG','600291.XSHG'],'20140101','20150101', 1)
+# print(spread)
+    
+#获取价差列表(列表套列表),处理函数中直接进行判断，买卖时包含buy，sell-list
+spread = []
+for sec in sec_pair_list:
+    spread_transition = PriceSpread(sec, '20150101', '20160101', 1)
+    spread.append(spread_transition)
+
+#优矿主函数
+start = '2016-01-01'                       # 回测起始时间
+end = '2017-01-01'                         # 回测结束时间
+universe = DynamicUniverse('A')        # 证券池，支持股票、基金、期货、指数四种资产
+benchmark = 'HS300'                        # 策略参考标准
+freq = 'd'                                 # 策略类型，'d'表示日间策略使用日线回测，'m'表示日内策略使用分钟线回测
+refresh_rate = 1                           # 调仓频率，表示执行handle_data的时间间隔，若freq = 'd'时间间隔的单位为交易日，若freq = 'm'时间间隔为分钟
+  
+# 配置账户信息，支持多资产多账户
+accounts = {
+    'Kyrie_account': AccountConfig(account_type='security', capital_base=10000000)
+}
+  
+def initialize(context):
+    pass
+  
+# 每个单位时间(如果按天回测,则每天调用一次,如果按分钟,则每分钟调用一次)调用一次
+def handle_data(context): 
+    account = context.get_account('Kyrie_account')
+    position = account.get_positions()
+    
+    buy_list = []
+    sell_list = []
+
+    for i in range(len(sec_pair_list)):
+        data = context.history(sec_pair_list[i], attribute=['closePrice'], time_range=1, freq='1d', style='ast', rtype='frame')
+        data = data['closePrice']
+        data['spread'] = data[sec_pair_list[i][0]] - data[sec_pair_list[i][1]]
+        if data.iat[0,2] < spread[i][0] and sec_pair_list[i][1] in position:
+            sell_list.append(sec_pair_list[i][1])
+        elif data.iat[0,2] > spread[i][1] and sec_pair_list[i][0] in position:
+            sell_list.append(sec_pair_list[i][0])   
+        elif data.iat[0,2] > spread[i][0]:     #大于spread 买入第二个股票
+            buy_list.append(sec_pair_list[i][1])
+        elif data.iat[0,2] < spread[i][1]:
+            buy_list.append(sec_pair_list[i][0])   #小于spread 买入第一个股票
+    
+    # print('buy_list:',buy_list)
+    # print('sell_list:',sell_list)
+    # print(position)
+    for stock in sell_list:
+        if stock in position:
+            account.order_to(stock, 0)
+    
+    for stock in buy_list:
+        if stock not in position:
+            account.order_pct_to(stock, 0.1)
